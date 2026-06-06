@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { gsap } from "gsap";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 // Dynamic imports of Tauri APIs to prevent Next.js SSR build failures
 let invoke: <T = any>(cmd: string, args?: any) => Promise<T> = async () => ({} as any);
@@ -24,6 +25,7 @@ interface Metrics {
 }
 
 export default function Dashboard() {
+  const { language, setLanguage, t } = useLanguage();
   const [botRunning, setBotRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [currentTab, setCurrentTab] = useState<"home" | "console" | "strategy" | "purge">("home");
@@ -39,7 +41,7 @@ export default function Dashboard() {
   const [envContent, setEnvContent] = useState("");
   const [subThreshold, setSubThreshold] = useState("14.0");
   const [starThreshold, setStarThreshold] = useState("16.0");
-  const [language, setLanguage] = useState("Python");
+  const [targetLanguage, setTargetLanguage] = useState("Python");
   const [fetchCount, setFetchCount] = useState("5");
 
   // Whitelist state
@@ -88,8 +90,8 @@ export default function Dashboard() {
         const u = await listen<{ message: string }>("bot-log", (event) => {
           setLogs((prev) => {
             const updated = [...prev, event.payload.message];
-            // Keep last 400 logs to prevent memory bloat
-            return updated.slice(-400);
+            // Memory Leak Prevention: Cap array at 500 lines
+            return updated.slice(-500);
           });
         });
         unlistenFn = u;
@@ -151,7 +153,6 @@ export default function Dashboard() {
   const animateCounter = (ref: React.RefObject<HTMLDivElement>, value: number) => {
     if (!ref.current) return;
     const targetObj = { val: 0 };
-    // Get current text or default to 0
     const currentVal = parseInt(ref.current.innerText) || 0;
     targetObj.val = currentVal;
     
@@ -193,7 +194,7 @@ export default function Dashboard() {
         const value = parts.slice(1).join("=").trim().replace(/'/g, "").replace(/"/g, "");
         if (key === "SUBSCRIBE_THRESHOLD") setSubThreshold(value);
         if (key === "STAR_THRESHOLD") setStarThreshold(value);
-        if (key === "LANGUAGE") setLanguage(value);
+        if (key === "LANGUAGE") setTargetLanguage(value);
         if (key === "FETCH_COUNT") setFetchCount(value);
       }
     });
@@ -208,7 +209,6 @@ export default function Dashboard() {
   };
 
   const handleSaveSettings = async () => {
-    // Reconstruct env content based on current state or overwrite values
     let lines = envContent.split("\n");
     const updatedLines = lines.map((line) => {
       const parts = line.split("=");
@@ -216,7 +216,7 @@ export default function Dashboard() {
         const key = parts[0].trim();
         if (key === "SUBSCRIBE_THRESHOLD") return `SUBSCRIBE_THRESHOLD=${subThreshold}`;
         if (key === "STAR_THRESHOLD") return `STAR_THRESHOLD=${starThreshold}`;
-        if (key === "LANGUAGE") return `LANGUAGE=${language}`;
+        if (key === "LANGUAGE") return `LANGUAGE=${targetLanguage}`;
         if (key === "FETCH_COUNT") return `FETCH_COUNT=${fetchCount}`;
       }
       return line;
@@ -226,9 +226,9 @@ export default function Dashboard() {
     try {
       await invoke("save_env", { content: finalContent });
       setEnvContent(finalContent);
-      alert("Settings saved successfully!");
+      alert(t("saved_success"));
     } catch (err) {
-      alert(`Error saving settings: ${err}`);
+      alert(`${t("error_saving")} ${err}`);
     }
   };
 
@@ -268,13 +268,13 @@ export default function Dashboard() {
       try {
         await invoke("stop_bot");
         setBotRunning(false);
-        setLogs((prev) => [...prev, "[SYSTEM] Bot stopped by user."]);
+        setLogs((prev) => [...prev, t("bot_stopped_msg")].slice(-500));
       } catch (err) {
         alert(`Error stopping bot: ${err}`);
       }
     } else {
       try {
-        setLogs((prev) => [...prev, "[SYSTEM] Spawning async bot process..."]);
+        setLogs((prev) => [...prev, t("bot_started_msg")].slice(-500));
         await invoke("start_bot");
         setBotRunning(true);
       } catch (err) {
@@ -283,149 +283,175 @@ export default function Dashboard() {
     }
   };
 
+  const toggleLanguage = () => {
+    setLanguage(language === "pt" ? "en" : "pt");
+  };
+
   const clearLogs = () => {
     setLogs([]);
   };
 
   return (
-    <div ref={mainContainerRef} className="flex h-screen w-screen bg-black text-white font-sans selection:bg-white selection:text-black">
-      {/* SIDEBAR NAVIGATION */}
-      <aside className="w-80 border-r border-neutral-900 flex flex-col justify-between p-8">
-        <div>
+    <div ref={mainContainerRef} className="flex h-screen w-screen bg-black text-white font-sans selection:bg-white selection:text-black overflow-hidden">
+      
+      {/* FIXED SIDEBAR */}
+      <aside className="w-80 h-screen border-r border-neutral-900 flex flex-col justify-between p-8 shrink-0">
+        <div className="space-y-10">
+          
           {/* Logo / Header */}
-          <div className="mb-12">
-            <h1 className="text-xl font-bold tracking-tight uppercase">Async Growth Bot</h1>
-            <p className="text-xs text-neutral-500 mt-1">Monochrome Control Desk</p>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight uppercase">Async Growth</h1>
+            <p className="text-xs text-neutral-500 mt-1">GitHub Automation System</p>
+          </div>
+
+          {/* Bot Control Quick Switch (Featured) */}
+          <div className="border border-neutral-800 rounded-lg p-5 bg-neutral-950/40 space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-xs tracking-wider uppercase text-neutral-400 font-semibold">{t("bot_status")}</span>
+              <span className={`inline-block h-2 w-2 rounded-full ${botRunning ? "bg-white shadow-[0_0_10px_#fff]" : "bg-neutral-800"}`} />
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono text-neutral-500">{botRunning ? t("running") : t("idle")}</span>
+              <button
+                onClick={toggleBot}
+                className={`w-14 h-7 flex items-center p-1 rounded-full border transition-all duration-300 ${
+                  botRunning ? "bg-white border-white justify-end" : "bg-transparent border-neutral-800 justify-start"
+                }`}
+              >
+                <span className={`w-5 h-5 inline-block rounded-full transition-all duration-300 ${botRunning ? "bg-black" : "bg-neutral-700"}`} />
+              </button>
+            </div>
           </div>
 
           {/* Navigation Links */}
-          <nav className="space-y-4">
+          <nav className="space-y-2">
             <button
               onClick={() => setCurrentTab("home")}
-              className={`w-full text-left px-4 py-3 rounded-none text-sm transition-all duration-200 border ${
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm transition-all duration-200 border ${
                 currentTab === "home"
-                  ? "bg-white text-black border-white"
+                  ? "bg-white text-black border-white font-semibold"
                   : "bg-transparent text-neutral-400 border-transparent hover:text-white"
               }`}
             >
-              Control Desk
+              {t("nav_home")}
             </button>
             <button
               onClick={() => setCurrentTab("console")}
-              className={`w-full text-left px-4 py-3 rounded-none text-sm transition-all duration-200 border ${
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm transition-all duration-200 border ${
                 currentTab === "console"
-                  ? "bg-white text-black border-white"
+                  ? "bg-white text-black border-white font-semibold"
                   : "bg-transparent text-neutral-400 border-transparent hover:text-white"
               }`}
             >
-              Terminal Console
+              {t("nav_console")}
             </button>
             <button
               onClick={() => setCurrentTab("strategy")}
-              className={`w-full text-left px-4 py-3 rounded-none text-sm transition-all duration-200 border ${
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm transition-all duration-200 border ${
                 currentTab === "strategy"
-                  ? "bg-white text-black border-white"
+                  ? "bg-white text-black border-white font-semibold"
                   : "bg-transparent text-neutral-400 border-transparent hover:text-white"
               }`}
             >
-              Strategy Config
+              {t("nav_strategy")}
             </button>
             <button
               onClick={() => setCurrentTab("purge")}
-              className={`w-full text-left px-4 py-3 rounded-none text-sm transition-all duration-200 border ${
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm transition-all duration-200 border ${
                 currentTab === "purge"
-                  ? "bg-white text-black border-white"
+                  ? "bg-white text-black border-white font-semibold"
                   : "bg-transparent text-neutral-400 border-transparent hover:text-white"
               }`}
             >
-              Purge & Whitelist
+              {t("nav_purge")}
             </button>
           </nav>
         </div>
 
-        {/* Bot Runner Status */}
-        <div className="border border-neutral-900 p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-xs tracking-wider uppercase text-neutral-400">Purger Engine</span>
-            <span className={`inline-block h-2 w-2 rounded-full ${botRunning ? "bg-white shadow-[0_0_10px_#fff]" : "bg-neutral-800"}`} />
-          </div>
+        {/* Footer info (Language switcher + version) */}
+        <div className="space-y-4">
           <button
-            onClick={toggleBot}
-            className={`w-full py-3 text-xs tracking-widest uppercase font-bold border transition-all duration-300 ${
-              botRunning
-                ? "bg-neutral-900 border-neutral-800 text-white hover:bg-white hover:text-black hover:border-white"
-                : "bg-white border-white text-black hover:bg-neutral-900 hover:text-white hover:border-neutral-800"
-            }`}
+            onClick={toggleLanguage}
+            className="w-full py-2 border border-neutral-900 rounded-lg text-xs uppercase tracking-widest text-neutral-400 hover:text-white hover:border-neutral-700 transition-all duration-200"
           >
-            {botRunning ? "Stop Agent" : "Start Agent"}
+            {t("change_language")}: {language.toUpperCase()}
           </button>
+          <div className="text-center text-[10px] text-neutral-600 font-mono">
+            {t("version")}: 1.0.0
+          </div>
         </div>
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-neutral-950/20">
-        <header className="h-20 border-b border-neutral-900 px-12 flex items-center justify-between">
+      <main className="flex-1 h-screen flex flex-col overflow-hidden bg-neutral-950/20">
+        
+        {/* HEADER */}
+        <header className="h-20 border-b border-neutral-900 px-12 flex items-center justify-between shrink-0">
           <span className="text-xs uppercase tracking-wider text-neutral-400">
-            {currentTab === "home" && "Overview"}
-            {currentTab === "console" && "Process stdout/stderr log stream"}
-            {currentTab === "strategy" && "Edit .env Variables"}
-            {currentTab === "purge" && "Manage protection lists"}
+            {currentTab === "home" && t("nav_home")}
+            {currentTab === "console" && t("nav_console")}
+            {currentTab === "strategy" && t("nav_strategy")}
+            {currentTab === "purge" && t("nav_purge")}
           </span>
           <span className="text-xs text-neutral-600 font-mono">
-            V1.0.0 // STATUS: {botRunning ? "ON_LOOP" : "IDLE"}
+            {t("status")}: {botRunning ? t("active") : t("inactive")}
           </span>
         </header>
 
+        {/* TAB BODY (SCROLLABLE) */}
         <section ref={tabContentRef} className="flex-1 overflow-y-auto p-12">
+          
           {/* TAB 1: HOME */}
           {currentTab === "home" && (
             <div className="space-y-12">
               <div className="max-w-xl">
-                <h2 className="text-3xl font-light tracking-tight">System Status Overview</h2>
+                <h2 className="text-3xl font-light tracking-tight">{t("dashboard_title")}</h2>
                 <p className="text-neutral-500 text-sm mt-3 leading-relaxed">
-                  High-contrast control panel monitoring GitHub engagement activities. 
-                  Below are real-time execution statistics queried directly from the SQLite database.
+                  Visão geral de engajamento do GitHub Async Growth. O bot descobre novos projetos,
+                  avalia com IA localmente e purga perfis inativos.
                 </p>
               </div>
 
               {/* Metrics Grid */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
-                <div className="border border-neutral-900 p-8 flex flex-col justify-between h-40">
-                  <span className="text-neutral-500 text-xs tracking-wider uppercase">Rated Repositories</span>
-                  <div ref={evalRef} className="text-5xl font-light font-mono mt-4">0</div>
+                <div className="border border-neutral-900 rounded-lg p-6 flex flex-col justify-between h-36 bg-neutral-950/20">
+                  <span className="text-neutral-500 text-xs tracking-wider uppercase">{t("total_evaluated")}</span>
+                  <div ref={evalRef} className="text-4xl font-light font-mono mt-2">0</div>
                 </div>
-                <div className="border border-neutral-900 p-8 flex flex-col justify-between h-40">
-                  <span className="text-neutral-500 text-xs tracking-wider uppercase">Follows Performed</span>
-                  <div ref={followRef} className="text-5xl font-light font-mono mt-4">0</div>
+                <div className="border border-neutral-900 rounded-lg p-6 flex flex-col justify-between h-36 bg-neutral-950/20">
+                  <span className="text-neutral-500 text-xs tracking-wider uppercase">{t("total_followed")}</span>
+                  <div ref={followRef} className="text-4xl font-light font-mono mt-2">0</div>
                 </div>
-                <div className="border border-neutral-900 p-8 flex flex-col justify-between h-40">
-                  <span className="text-neutral-500 text-xs tracking-wider uppercase">Starred Projects</span>
-                  <div ref={starRef} className="text-5xl font-light font-mono mt-4">0</div>
+                <div className="border border-neutral-900 rounded-lg p-6 flex flex-col justify-between h-36 bg-neutral-950/20">
+                  <span className="text-neutral-500 text-xs tracking-wider uppercase">{t("total_starred")}</span>
+                  <div ref={starRef} className="text-4xl font-light font-mono mt-2">0</div>
                 </div>
-                <div className="border border-neutral-900 p-8 flex flex-col justify-between h-40">
-                  <span className="text-neutral-500 text-xs tracking-wider uppercase">Logged Purged Users</span>
-                  <div ref={purgeRef} className="text-5xl font-light font-mono mt-4">0</div>
+                <div className="border border-neutral-900 rounded-lg p-6 flex flex-col justify-between h-36 bg-neutral-950/20">
+                  <span className="text-neutral-500 text-xs tracking-wider uppercase">{t("purge_queue_size")}</span>
+                  <div ref={purgeRef} className="text-4xl font-light font-mono mt-2">0</div>
                 </div>
               </div>
 
-              {/* Bot Controller Switch Detail */}
-              <div className="border border-neutral-900 p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                <div>
-                  <h3 className="text-sm font-semibold uppercase">Orchestration Switch</h3>
-                  <p className="text-xs text-neutral-500 mt-1">
-                    Spawn a background thread to call the main loop. TCP connections will be established and maintained dynamically.
-                  </p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-xs font-mono text-neutral-400">{botRunning ? "ACTIVE" : "INACTIVE"}</span>
+              {/* Condensed Live Terminal Preview */}
+              <div className="border border-neutral-900 rounded-lg p-6 space-y-4 bg-neutral-950/10">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-neutral-400 uppercase tracking-wider font-mono">Live Terminal Preview</span>
                   <button
-                    onClick={toggleBot}
-                    className={`w-16 h-8 flex items-center p-1 rounded-none border transition-all duration-300 ${
-                      botRunning ? "bg-white border-white justify-end" : "bg-transparent border-neutral-700 justify-start"
-                    }`}
+                    onClick={() => setCurrentTab("console")}
+                    className="text-neutral-500 hover:text-white text-xs underline transition-colors"
                   >
-                    <span className={`w-6 h-6 inline-block rounded-none transition-all duration-300 ${botRunning ? "bg-black" : "bg-neutral-500"}`} />
+                    View Full Console
                   </button>
+                </div>
+                <div className="bg-black border border-neutral-950 rounded-lg p-4 font-mono text-xs text-neutral-400 leading-relaxed min-h-[140px] max-h-[140px] overflow-hidden">
+                  {logs.length === 0 ? (
+                    <div className="text-neutral-700 italic">{t("console_idle")}</div>
+                  ) : (
+                    logs.slice(-6).map((log, index) => (
+                      <div key={index} className="truncate">{log}</div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -435,19 +461,19 @@ export default function Dashboard() {
           {currentTab === "console" && (
             <div className="flex flex-col h-full space-y-6">
               <div className="flex justify-between items-center">
-                <span className="text-xs text-neutral-400 uppercase font-mono tracking-wider">Bot stdout log</span>
+                <span className="text-xs text-neutral-400 uppercase font-mono tracking-wider">Console logs stream ({logs.length}/500)</span>
                 <button
                   onClick={clearLogs}
-                  className="px-4 py-2 border border-neutral-800 text-xs uppercase hover:bg-white hover:text-black hover:border-white transition-all duration-200"
+                  className="px-4 py-2 border border-neutral-800 rounded-lg text-xs uppercase hover:bg-white hover:text-black hover:border-white transition-all duration-200"
                 >
-                  Clear Screen
+                  {t("clear_screen")}
                 </button>
               </div>
 
-              {/* Simulated Console Screen */}
-              <div className="flex-1 bg-black border border-neutral-900 p-6 font-mono text-xs leading-relaxed overflow-y-auto min-h-[400px] max-h-[500px]">
+              {/* Monospace full terminal screen */}
+              <div className="flex-1 bg-black border border-neutral-900 rounded-lg p-6 font-mono text-xs leading-relaxed overflow-y-auto min-h-[450px] max-h-[550px]">
                 {logs.length === 0 ? (
-                  <div className="text-neutral-600 italic">Console is currently idle. Start the bot to stream logs...</div>
+                  <div className="text-neutral-700 italic">{t("console_idle")}</div>
                 ) : (
                   logs.map((log, index) => (
                     <div
@@ -471,108 +497,131 @@ export default function Dashboard() {
 
           {/* TAB 3: STRATEGY CONFIG */}
           {currentTab === "strategy" && (
-            <div className="space-y-8 max-w-2xl">
+            <div className="space-y-8 max-w-4xl">
               <div>
-                <h3 className="text-lg font-light">Parameters & Threshold Editor</h3>
+                <h3 className="text-xl font-light">{t("env_editor")}</h3>
                 <p className="text-xs text-neutral-500 mt-1">
-                  Adjust target programming languages, repository thresholds, and evaluation caps for the LLM review.
+                  Ajuste os limiares de nota e linguagens do bot.
                 </p>
               </div>
 
-              <div className="space-y-6 border border-neutral-900 p-8">
-                <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                
+                {/* Inputs card */}
+                <div className="space-y-6 border border-neutral-900 rounded-lg p-8 bg-neutral-950/20">
                   <div className="space-y-2">
-                    <label className="block text-xs uppercase text-neutral-400 font-mono">Target Programming Language</label>
+                    <label className="block text-xs uppercase text-neutral-400 font-mono font-semibold">{t("lang_label")}</label>
                     <input
                       type="text"
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
-                      className="w-full bg-black border border-neutral-800 px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 rounded-none text-white"
+                      value={targetLanguage}
+                      onChange={(e) => setTargetLanguage(e.target.value)}
+                      className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 text-white"
                     />
                   </div>
+                  
                   <div className="space-y-2">
-                    <label className="block text-xs uppercase text-neutral-400 font-mono">Fetch Quota Per Cycle</label>
+                    <label className="block text-xs uppercase text-neutral-400 font-mono font-semibold">{t("fetch_label")}</label>
                     <input
                       type="number"
                       value={fetchCount}
                       onChange={(e) => setFetchCount(e.target.value)}
-                      className="w-full bg-black border border-neutral-800 px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 rounded-none text-white"
+                      className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 text-white"
                     />
                   </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="block text-xs uppercase text-neutral-400 font-mono">Subscribe Grade Threshold</label>
+                    <label className="block text-xs uppercase text-neutral-400 font-mono font-semibold">{t("sub_threshold_label")}</label>
                     <input
                       type="text"
                       value={subThreshold}
                       onChange={(e) => setSubThreshold(e.target.value)}
-                      className="w-full bg-black border border-neutral-800 px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 rounded-none text-white"
+                      className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 text-white"
                     />
                   </div>
+
                   <div className="space-y-2">
-                    <label className="block text-xs uppercase text-neutral-400 font-mono">Star Grade Threshold</label>
+                    <label className="block text-xs uppercase text-neutral-400 font-mono font-semibold">{t("star_threshold_label")}</label>
                     <input
                       type="text"
                       value={starThreshold}
                       onChange={(e) => setStarThreshold(e.target.value)}
-                      className="w-full bg-black border border-neutral-800 px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 rounded-none text-white"
+                      className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 text-white"
                     />
+                  </div>
+
+                  <div className="pt-4">
+                    <button
+                      onClick={handleSaveSettings}
+                      className="w-full py-3 bg-white text-black border border-white rounded-lg text-xs uppercase tracking-widest font-bold hover:bg-black hover:text-white hover:border-neutral-800 transition-all duration-300"
+                    >
+                      {t("save_settings")}
+                    </button>
                   </div>
                 </div>
 
-                <div className="pt-6">
-                  <button
-                    onClick={handleSaveSettings}
-                    className="px-8 py-3 bg-white text-black border border-white text-xs uppercase tracking-widest font-bold hover:bg-black hover:text-white hover:border-neutral-800 transition-all duration-300"
-                  >
-                    Save Configuration
-                  </button>
+                {/* Strategy tips cards */}
+                <div className="space-y-6">
+                  <h4 className="text-xs uppercase font-mono tracking-wider text-neutral-400">{t("quick_tips")}</h4>
+                  
+                  <div className="border border-neutral-900 rounded-lg p-5 space-y-2 bg-neutral-950/10">
+                    <h5 className="text-xs uppercase font-mono font-bold text-neutral-300">Stars Policy</h5>
+                    <p className="text-xs text-neutral-500 leading-relaxed">{t("tip_star_threshold")}</p>
+                  </div>
+
+                  <div className="border border-neutral-900 rounded-lg p-5 space-y-2 bg-neutral-950/10">
+                    <h5 className="text-xs uppercase font-mono font-bold text-neutral-300">Rate Limits Protection</h5>
+                    <p className="text-xs text-neutral-500 leading-relaxed">{t("tip_fetch_limit")}</p>
+                  </div>
+
+                  <div className="border border-neutral-900 rounded-lg p-5 space-y-2 bg-neutral-950/10">
+                    <h5 className="text-xs uppercase font-mono font-bold text-neutral-300">High Conversion Targets</h5>
+                    <p className="text-xs text-neutral-500 leading-relaxed">{t("tip_subscribe_threshold")}</p>
+                  </div>
                 </div>
+
               </div>
             </div>
           )}
 
           {/* TAB 4: PURGE & WHITELIST */}
           {currentTab === "purge" && (
-            <div className="space-y-12">
-              {/* Whitelist Settings */}
-              <div className="space-y-6 max-w-2xl">
+            <div className="space-y-12 max-w-4xl">
+              
+              {/* Whitelist manager */}
+              <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-light">Protected Accounts (Whitelist)</h3>
+                  <h3 className="text-xl font-light">{t("protected_accounts")}</h3>
                   <p className="text-xs text-neutral-500 mt-1">
-                    Users specified below will never be unfollowed under any circumstances.
+                    Insira usuários para protegê-los de qualquer ciclo de purga.
                   </p>
                 </div>
 
-                {/* Inline Whitelist Editor */}
-                <div className="flex gap-4">
+                <div className="flex gap-4 max-w-2xl">
                   <input
                     type="text"
-                    placeholder="GitHub username (e.g. torvalds)"
+                    placeholder={t("whitelist_placeholder")}
                     value={newWhitelistUser}
                     onChange={(e) => setNewWhitelistUser(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleAddWhitelist()}
-                    className="flex-1 bg-black border border-neutral-800 px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 rounded-none text-white"
+                    className="flex-1 bg-black border border-neutral-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-white transition-all duration-200 text-white"
                   />
                   <button
                     onClick={handleAddWhitelist}
-                    className="px-6 border border-neutral-800 text-xs uppercase tracking-widest hover:bg-white hover:text-black hover:border-white transition-all duration-200"
+                    className="px-6 border border-neutral-800 rounded-lg text-xs uppercase tracking-widest hover:bg-white hover:text-black hover:border-white transition-all duration-200"
                   >
-                    Add User
+                    {t("add_user")}
                   </button>
                 </div>
 
-                {/* Whitelist Tags Cloud */}
-                <div className="border border-neutral-900 p-6 min-h-[120px] flex flex-wrap gap-3 items-start content-start">
+                {/* Whitelist Tag list */}
+                <div className="border border-neutral-900 rounded-lg p-6 min-h-[120px] flex flex-wrap gap-3 items-start content-start bg-neutral-950/20">
                   {whitelistArray.length === 0 ? (
                     <span className="text-xs text-neutral-600 italic">No whitelisted users configured yet.</span>
                   ) : (
                     whitelistArray.map((user) => (
                       <div
                         key={user}
-                        className="flex items-center gap-2 px-3 py-1.5 border border-neutral-800 text-xs bg-neutral-950 font-mono"
+                        className="flex items-center gap-2 px-3 py-1.5 border border-neutral-800 rounded-lg text-xs bg-neutral-950 font-mono"
                       >
                         <span>@{user}</span>
                         <button
@@ -587,22 +636,20 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Purge Queue Table */}
+              {/* Unfollow logs display */}
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-light">Purged Profiles Log</h3>
-                  <p className="text-xs text-neutral-500 mt-1">
-                    This table logs profiles that have been unfollowed because they did not follow back, preventing re-engagement in future search fetch loops.
-                  </p>
+                  <h3 className="text-xl font-light">{t("unfollow_log_title")}</h3>
+                  <p className="text-xs text-neutral-500 mt-1">{t("unfollow_log_desc")}</p>
                 </div>
 
-                <div className="border border-neutral-900 overflow-hidden">
+                <div className="border border-neutral-900 rounded-lg overflow-hidden">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-neutral-900 bg-neutral-950 text-xs font-mono uppercase text-neutral-400">
-                        <th className="p-4">Profile Username</th>
+                        <th className="p-4">GitHub username</th>
                         <th className="p-4">Status</th>
-                        <th className="p-4">Actions Allowed</th>
+                        <th className="p-4">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-900 text-sm font-mono">
@@ -622,8 +669,10 @@ export default function Dashboard() {
                   </table>
                 </div>
               </div>
+
             </div>
           )}
+
         </section>
       </main>
     </div>

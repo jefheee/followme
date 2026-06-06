@@ -4,7 +4,7 @@
 )]
 
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -25,8 +25,25 @@ struct Metrics {
     purge_queue_size: i64,
 }
 
+fn get_project_root() -> std::path::PathBuf {
+    // Traverse up parent directories from the current working directory to find main.py
+    let mut path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    for _ in 0..5 {
+        if path.join("main.py").exists() {
+            return path;
+        }
+        if let Some(parent) = path.parent() {
+            path = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    // Fallback to relative parent path
+    std::path::PathBuf::from("..")
+}
+
 fn get_db_path() -> std::path::PathBuf {
-    std::path::Path::new("..").join("data").join("followme.sqlite")
+    get_project_root().join("data").join("followme.sqlite")
 }
 
 #[tauri::command]
@@ -36,11 +53,14 @@ fn start_bot(app_handle: AppHandle) -> Result<String, String> {
         return Err("Bot is already running".into());
     }
 
-    let project_root = std::path::Path::new("..");
+    let project_root = get_project_root();
+    
+    // Explicitly set the CWD (current working directory) of the Python process
+    // so it resolves .env and database locations relative to the workspace root.
     let mut child = Command::new("python")
+        .current_dir(&project_root)
         .arg("main.py")
         .arg("-i") // Infinite loop
-        .current_dir(project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -92,7 +112,7 @@ fn stop_bot() -> Result<String, String> {
 fn get_metrics() -> Result<Metrics, String> {
     let db_path = get_db_path();
     let conn = rusqlite::Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+        .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
 
     let total_evaluated: i64 = conn
         .query_row(
@@ -136,14 +156,14 @@ fn get_metrics() -> Result<Metrics, String> {
 
 #[tauri::command]
 fn read_env() -> Result<String, String> {
-    let path = std::path::Path::new("..").join(".env");
+    let path = get_project_root().join(".env");
     std::fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read .env file: {}", e))
 }
 
 #[tauri::command]
 fn save_env(content: String) -> Result<String, String> {
-    let path = std::path::Path::new("..").join(".env");
+    let path = get_project_root().join(".env");
     std::fs::write(&path, content)
         .map_err(|e| format!("Failed to write .env file: {}", e))?;
     Ok("Saved .env successfully".into())
@@ -151,7 +171,7 @@ fn save_env(content: String) -> Result<String, String> {
 
 #[tauri::command]
 fn read_whitelist() -> Result<String, String> {
-    let path = std::path::Path::new("..").join("whitelist.txt");
+    let path = get_project_root().join("whitelist.txt");
     if !path.exists() {
         return Ok("".into());
     }
@@ -161,7 +181,7 @@ fn read_whitelist() -> Result<String, String> {
 
 #[tauri::command]
 fn save_whitelist(content: String) -> Result<String, String> {
-    let path = std::path::Path::new("..").join("whitelist.txt");
+    let path = get_project_root().join("whitelist.txt");
     std::fs::write(&path, content)
         .map_err(|e| format!("Failed to write whitelist.txt: {}", e))?;
     Ok("Saved whitelist.txt successfully".into())
