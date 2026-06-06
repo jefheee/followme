@@ -1,17 +1,14 @@
-"""Minimal Ollama JSON-generation client (stdlib only)."""
+"""Minimal Ollama JSON-generation client (aiohttp powered)."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
-import urllib.error
-import urllib.request
 from typing import Any
-
+import aiohttp
 
 logger = logging.getLogger(__name__)
-
 
 SYSTEM_PROMPT = (
     "You are a senior code reviewer. Given a repository digest, return a STRICT JSON object "
@@ -24,13 +21,28 @@ SYSTEM_PROMPT = (
 )
 
 
-def ensure_available(settings: dict[str, Any]) -> None:
+async def ensure_available(
+    settings: dict[str, Any],
+    session: aiohttp.ClientSession | None = None,
+) -> None:
     url = f"{settings['ollama_url']}/api/tags"
+    timeout_cfg = aiohttp.ClientTimeout(total=settings.get("request_timeout_seconds", 30))
+
     try:
-        with urllib.request.urlopen(url, timeout=settings["request_timeout_seconds"]) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        if session is not None:
+            async with session.get(url, timeout=timeout_cfg) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Cannot reach Ollama: status {resp.status}")
+                payload = await resp.json()
+        else:
+            async with aiohttp.ClientSession() as new_session:
+                async with new_session.get(url, timeout=timeout_cfg) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(f"Cannot reach Ollama: status {resp.status}")
+                    payload = await resp.json()
+    except Exception as exc:
         raise RuntimeError(f"Cannot reach Ollama at {settings['ollama_url']}: {exc}") from exc
+
     models = {str(m.get("name", "")).strip() for m in payload.get("models", []) if isinstance(m, dict)}
     if settings["ollama_model"] not in models:
         raise RuntimeError(
@@ -38,7 +50,12 @@ def ensure_available(settings: dict[str, Any]) -> None:
         )
 
 
-def evaluate(settings: dict[str, Any], full_name: str, digest: str) -> dict[str, Any]:
+async def evaluate(
+    settings: dict[str, Any],
+    full_name: str,
+    digest: str,
+    session: aiohttp.ClientSession | None = None,
+) -> dict[str, Any]:
     """Ask Ollama for {idea, skill, description}; clamp scores into [1, 10]."""
     user_prompt = f"Repository: {full_name}\nLanguage: {settings['language']}\n\nDigest:\n{digest}\n\nReturn JSON only."
     payload = {
@@ -49,22 +66,28 @@ def evaluate(settings: dict[str, Any], full_name: str, digest: str) -> dict[str,
         "format": "json",
         "options": {"temperature": 0.1},
     }
-    req = urllib.request.Request(
-        f"{settings['ollama_url']}/api/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    timeout = max(180, settings["request_timeout_seconds"])
+
+    url = f"{settings['ollama_url']}/api/generate"
+    timeout = max(180, settings.get("request_timeout_seconds", 30))
+    timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"Ollama HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')}") from exc
-    except urllib.error.URLError as exc:
+        if session is not None:
+            async with session.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout_cfg) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    raise RuntimeError(f"Ollama HTTP {resp.status}: {err_text}")
+                parsed = await resp.json()
+        else:
+            async with aiohttp.ClientSession() as new_session:
+                async with new_session.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout_cfg) as resp:
+                    if resp.status != 200:
+                        err_text = await resp.text()
+                        raise RuntimeError(f"Ollama HTTP {resp.status}: {err_text}")
+                    parsed = await resp.json()
+    except Exception as exc:
         raise RuntimeError(f"Cannot reach Ollama: {exc}") from exc
 
-    parsed = json.loads(raw)
     text = str(parsed.get("response", "")).strip()
     return parse_json_blob(text)
 

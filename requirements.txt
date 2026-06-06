@@ -1,2 +1,1 @@
-# All scripts rely on the Python 3.11+ standard library only.
-# Listed here for completeness; `pip install -r requirements.txt` is a no-op.
+aiohttp>=3.9.0

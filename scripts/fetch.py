@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import asyncio
 from pathlib import Path
-
+from typing import Any
+import aiohttp
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -15,7 +17,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from libs import db, github
 from libs.settings import load_settings
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,16 +32,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    settings = load_settings(PROJECT_ROOT)
-    wanted = max(1, args.count if args.count is not None else settings["fetch_count"])
+async def run(
+    settings: dict[str, Any],
+    session: aiohttp.ClientSession,
+    count: int | None = None,
+) -> int:
+    """Run repository search and insert results asynchronously."""
+    wanted = max(1, count if count is not None else settings["fetch_count"])
 
     conn = db.connect(settings["db_path"])
     skip = db.known_repos(conn)
     logger.info(f"DB has {len(skip)} repos; fetching up to {wanted} new ones")
 
-    repos = github.search_recent_repositories(settings, wanted, skip)
+    repos = await github.search_recent_repositories(settings, wanted, skip, session=session)
     inserted = 0
     for repo in repos:
         if db.insert_repo(
@@ -54,6 +58,17 @@ def main() -> int:
             logger.info(f"+ {repo['full_name']} (owner: {repo['owner_login']})")
     logger.info(f"Inserted {inserted} new repositories")
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    settings = load_settings(PROJECT_ROOT)
+
+    async def _run():
+        async with aiohttp.ClientSession() as session:
+            return await run(settings, session, count=args.count)
+
+    return asyncio.run(_run())
 
 
 if __name__ == "__main__":

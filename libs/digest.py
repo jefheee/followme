@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from libs.github import git_basic_auth_header
 
-
 logger = logging.getLogger(__name__)
-
 
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "dist", "build", "__pycache__", ".idea", ".vscode"}
 
@@ -23,20 +21,36 @@ def reset_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def clone(clone_url: str, target: Path, depth: int, token: str) -> tuple[bool, str]:
+async def clone(clone_url: str, target: Path, depth: int, token: str) -> tuple[bool, str]:
+    """Clone a repository asynchronously using shallow cloning."""
     reset_dir(target)
     cmd = ["git"]
     auth_header = git_basic_auth_header(token)
     if auth_header:
         cmd += ["-c", f"http.extraheader={auth_header}"]
     cmd += ["clone", "--depth", str(depth), "--quiet", clone_url, str(target)]
+    
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except subprocess.TimeoutExpired:
-        return False, "clone timeout"
-    if result.returncode != 0:
-        return False, result.stderr.strip() or "clone failed"
-    return True, ""
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180.0)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return False, "clone timeout"
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode("utf-8", errors="replace").strip()
+            return False, err_msg or "clone failed"
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
 
 
 def iter_files(root: Path, extensions: list[str], max_bytes: int):
