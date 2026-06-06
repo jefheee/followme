@@ -9,3 +9,10 @@ data/
 .idea/
 .vscode/
 .claude/
+
+# Frontend (gui)
+gui/node_modules/
+gui/.next/
+gui/out/
+gui/src-tauri/target/
+
