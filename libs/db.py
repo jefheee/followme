@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE INDEX IF NOT EXISTS entries_profile_idx  ON entries(profile);
 CREATE INDEX IF NOT EXISTS entries_updated_idx  ON entries(updated_at);
 CREATE INDEX IF NOT EXISTS entries_idea_skill_idx ON entries((COALESCE(idea,0) + COALESCE(skill,0)));
+
+CREATE TABLE IF NOT EXISTS inbound_followers (
+    profile      TEXT PRIMARY KEY,
+    unfollowed   INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS inbound_followers_unfollowed_idx ON inbound_followers(unfollowed);
+
+CREATE TABLE IF NOT EXISTS metadata (
+    key          TEXT PRIMARY KEY,
+    value        TEXT NOT NULL
+);
 """
 
 
@@ -163,3 +175,54 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     followed = conn.execute("SELECT COUNT(DISTINCT profile) AS c FROM entries WHERE followed = 1").fetchone()["c"]
     starred = conn.execute("SELECT COUNT(*) AS c FROM entries WHERE starred = 1").fetchone()["c"]
     return {"total": total, "evaluated": evaluated, "followed": followed, "starred": starred}
+
+
+def mark_unfollowed(conn: sqlite3.Connection, profile: str) -> None:
+    now = now_iso()
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO inbound_followers (profile, unfollowed, updated_at)
+        VALUES (?, 1, ?)
+        """,
+        (profile, now),
+    )
+    conn.commit()
+
+
+def get_processed_profiles(conn: sqlite3.Connection) -> set[str]:
+    """Get all profiles that are followed or have been unfollowed."""
+    query = """
+    SELECT profile FROM entries WHERE followed = 1
+    UNION
+    SELECT profile FROM inbound_followers WHERE unfollowed = 1
+    """
+    return {row["profile"] for row in conn.execute(query)}
+
+
+def is_profile_processed(conn: sqlite3.Connection, profile: str) -> bool:
+    """Check if a profile is either currently followed or has been unfollowed.
+
+    Uses a highly performant query with UNION and LIMIT 1 to minimize I/O.
+    """
+    query = """
+    SELECT 1 FROM entries WHERE profile = ? AND followed = 1
+    UNION
+    SELECT 1 FROM inbound_followers WHERE profile = ? AND unfollowed = 1
+    LIMIT 1
+    """
+    cur = conn.execute(query, (profile, profile))
+    return cur.fetchone() is not None
+
+
+def get_metadata(conn: sqlite3.Connection, key: str, default: str | None = None) -> str | None:
+    row = conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+    conn.commit()
+

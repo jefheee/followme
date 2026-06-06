@@ -1,0 +1,4 @@
+# Users in this file will never be unfollowed by the bot under any circumstances.
+# Add one username per line.
+# Example:
+# github_username_to_keep

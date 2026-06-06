@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
+import aiohttp
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -35,13 +37,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main(session: aiohttp.ClientSession | None = None) -> int:
     args = parse_args()
     settings = load_settings(PROJECT_ROOT)
     min_score = args.min_score if args.min_score is not None else settings["star_threshold"]
     window_hours = args.window_hours if args.window_hours is not None else settings["window_hours"]
     dry_run = args.dry_run or settings["dry_run"]
 
+    if session is None:
+        async with aiohttp.ClientSession() as local_session:
+            return await run_star(settings, min_score, window_hours, dry_run, local_session)
+    else:
+        return await run_star(settings, min_score, window_hours, dry_run, session)
+
+
+async def run_star(
+    settings: dict[str, Any],
+    min_score: float,
+    window_hours: int,
+    dry_run: bool,
+    session: aiohttp.ClientSession,
+) -> int:
     conn = db.connect(settings["db_path"])
     candidates = db.unstarred_above(conn, min_score, window_hours)
     logger.info(
@@ -53,7 +69,7 @@ def main() -> int:
         if dry_run:
             logger.info(f"would star {row['repo']} (sum={score:.2f})")
             continue
-        if github.star(settings, row["repo"]):
+        if await github.star(settings, row["repo"], session):
             db.mark_starred(conn, row["repo"])
             logger.info(f"starred {row['repo']} (sum={score:.2f})")
         else:
@@ -63,4 +79,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
+

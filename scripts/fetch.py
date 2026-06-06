@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
+import aiohttp
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,16 +33,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
+async def main(session: aiohttp.ClientSession | None = None) -> int:
     args = parse_args()
     settings = load_settings(PROJECT_ROOT)
     wanted = max(1, args.count if args.count is not None else settings["fetch_count"])
 
     conn = db.connect(settings["db_path"])
     skip = db.known_repos(conn)
-    logger.info(f"DB has {len(skip)} repos; fetching up to {wanted} new ones")
+    skip_profiles = db.get_processed_profiles(conn)
+    logger.info(f"DB has {len(skip)} repos and {len(skip_profiles)} processed profiles; fetching up to {wanted} new ones")
 
-    repos = github.search_recent_repositories(settings, wanted, skip)
+    repos = await github.search_recent_repositories(settings, wanted, skip, skip_profiles, session)
     inserted = 0
     for repo in repos:
         if db.insert_repo(
@@ -57,4 +60,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
+

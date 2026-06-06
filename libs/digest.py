@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import os
+import stat
 from libs.github import git_basic_auth_header
 
 
@@ -17,9 +19,21 @@ logger = logging.getLogger(__name__)
 IGNORE_DIRS = {".git", "node_modules", "venv", ".venv", "dist", "build", "__pycache__", ".idea", ".vscode"}
 
 
-def reset_dir(path: Path) -> None:
+def remove_readonly(func: Any, path: str, excinfo: Any) -> None:
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass
+
+
+def remove_dir(path: Path) -> None:
     if path.exists():
-        shutil.rmtree(path)
+        shutil.rmtree(path, onerror=remove_readonly)
+
+
+def reset_dir(path: Path) -> None:
+    remove_dir(path)
     path.mkdir(parents=True, exist_ok=True)
 
 

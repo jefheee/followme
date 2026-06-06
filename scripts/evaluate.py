@@ -68,8 +68,7 @@ def main() -> int:
         except Exception as exc:
             logger.warning(f"Evaluation failed for {full_name}: {exc}\n{traceback.format_exc()}")
         finally:
-            if repo_dir.exists():
-                shutil.rmtree(repo_dir, ignore_errors=True)
+            digest.remove_dir(repo_dir)
     return 0
 
 
